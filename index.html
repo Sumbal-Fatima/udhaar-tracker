@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Udhaar Tracker</title>
+<style>
+  :root {
+    --bg:#f6f4ee; --card:#ffffff; --ink:#1f2a24; --muted:#66726b; --line:#e3dfd2;
+    --green:#2f6b3f; --green-soft:#e4efe5; --amber:#b7791f; --amber-soft:#fbf0d9;
+    --red:#b23a2e; --red-soft:#f8e3e0; --blue:#2b5d8a; --blue-soft:#e1ecf6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#161a17; --card:#1f2521; --ink:#e8ece8; --muted:#97a39b; --line:#2f3832;
+      --green:#7cc58d; --green-soft:#23382a; --amber:#e6b657; --amber-soft:#3a3120;
+      --red:#ef8b80; --red-soft:#40231f; --blue:#8bb8e0; --blue-soft:#1f3040; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between; padding:16px 20px; border-bottom:1px solid var(--line); background:var(--card); }
+  header h1 { margin:0; font-size:20px; }
+  header small { color:var(--muted); display:block; }
+  main { max-width:1100px; margin:0 auto; padding:16px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:16px; }
+  .stat { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px; }
+  .stat b { display:block; font-size:22px; }
+  .stat span { color:var(--muted); font-size:13px; }
+  nav { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:12px; }
+  nav button { background:transparent; border:1px solid var(--line); color:var(--ink); padding:8px 14px; border-radius:20px; cursor:pointer; font:inherit; }
+  nav button.on { background:var(--green); color:#fff; border-color:var(--green); }
+  .panel { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:14px; overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; min-width:640px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  button.act { background:var(--green); color:#fff; border:0; padding:7px 12px; border-radius:7px; cursor:pointer; font:inherit; font-size:13px; }
+  button.act.alt { background:transparent; color:var(--ink); border:1px solid var(--line); }
+  button.act:disabled { opacity:.5; cursor:wait; }
+  .chip { display:inline-block; padding:2px 9px; border-radius:12px; font-size:12px; font-weight:600; }
+  .low,.remind_now,.ok { background:var(--green-soft); color:var(--green); }
+  .medium,.wait,.draft,.pending { background:var(--amber-soft); color:var(--amber); }
+  .high,.escalate,.bad { background:var(--red-soft); color:var(--red); }
+  .approved,.sent,.confirmed,.rule { background:var(--blue-soft); color:var(--blue); }
+  .muted { color:var(--muted); }
+  .msg { white-space:pre-wrap; background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:10px; margin:6px 0; }
+  .item { border:1px solid var(--line); border-radius:10px; padding:12px; margin-bottom:10px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+  textarea, select, input { font:inherit; color:var(--ink); background:var(--card); border:1px solid var(--line); border-radius:7px; padding:8px; }
+  textarea { width:100%; min-height:70px; }
+  #toast { position:fixed; bottom:16px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:8px; display:none; max-width:90%; }
+  #toast.err { background:var(--red); color:#fff; }
+  .hint { color:var(--muted); font-size:13px; margin:0 0 10px; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>Udhaar Tracker</h1>
+    <small id="shop">Loading…</small>
+  </div>
+  <div class="row">
+    <button class="act" id="runReview">Run AI review</button>
+    <button class="act alt" id="resetDemo">Reset demo data</button>
+  </div>
+</header>
+<main>
+  <div class="cards" id="cards"></div>
+  <nav id="tabs">
+    <button data-t="review" class="on">Review queue</button>
+    <button data-t="reminders">Reminders</button>
+    <button data-t="promises">Promises</button>
+    <button data-t="customers">Customers</button>
+    <button data-t="ailog">AI log</button>
+  </nav>
+  <div class="panel" id="panel"></div>
+</main>
+<div id="toast"></div>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const pkr = (n) => "Rs " + Number(n || 0).toLocaleString("en-PK");
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+let tab = "review";
+let customersCache = [];
+
+function toast(msg, isErr) {
+  const t = $("#toast");
+  t.textContent = msg; t.className = isErr ? "err" : ""; t.style.display = "block";
+  clearTimeout(toast.h); toast.h = setTimeout(() => (t.style.display = "none"), isErr ? 7000 : 3000);
+}
+
+async function api(path, opts) {
+  const r = await fetch("/api" + path, opts && opts.body ? { method: "POST", headers: { "Content-Type": "application/json" }, ...opts, body: JSON.stringify(opts.body) } : opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.detail || ("Request failed (" + r.status + ")"));
+  return data;
+}
+
+async function busy(btn, label, fn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = label;
+  try { await fn(); } catch (e) { toast(e.message, true); }
+  btn.disabled = false; btn.textContent = old;
+}
+
+async function loadSummary() {
+  const s = await api("/summary");
+  $("#shop").textContent = s.shop_name + " · escalation threshold " + pkr(s.escalate_threshold);
+  $("#cards").innerHTML = [
+    [pkr(s.total_outstanding), "Total outstanding"],
+    [pkr(s.overdue_total), "Overdue (" + s.overdue_customers + " customers)"],
+    [s.open_escalations, "Owner decisions waiting"],
+    [s.draft_reminders, "Reminders awaiting action"],
+    [s.pending_promises, "Promises to confirm"],
+  ].map(([b, l]) => `<div class="stat"><b>${b}</b><span>${l}</span></div>`).join("");
+}
+
+const views = {
+  async review() {
+    const [r, c] = await Promise.all([api("/review"), api("/customers")]);
+    customersCache = c.customers;
+    if (!r.decisions.length) return `<p class="hint">No review yet. Press “Run AI review”: the AI reads each overdue account and decides who to remind, who to leave alone, and who needs your decision.</p>`;
+    const esc_open = r.escalations.filter((e) => e.status === "open");
+    let html = "";
+    if (esc_open.length) {
+      html += `<h3>Needs your decision</h3><p class="hint">The AI never sends anything for these. You decide.</p>` + esc_open.map((e) => `
+        <div class="item"><div class="row"><b>${esc(e.name)}</b><span class="chip high">${pkr(e.amount)} overdue</span><span class="muted">${esc(e.village || "")}</span></div>
+        <p>${esc(e.reason)}</p>
+        <div class="row">
+          <button class="act" onclick="decide(${e.id},'approve_reminder',this)">Approve a firm but polite reminder</button>
+          <button class="act alt" onclick="decide(${e.id},'extend_deadline',this)">Extend deadline</button>
+          <button class="act alt" onclick="decide(${e.id},'hold',this)">Hold</button>
+        </div></div>`).join("");
+    }
+    html += `<h3>AI review</h3><table><tr><th>Customer</th><th>Overdue</th><th>Days</th><th>Risk</th><th>Action</th><th>Why</th><th></th></tr>` +
+      r.decisions.map((d) => `<tr>
+        <td><b>${esc(d.name)}</b><br><span class="muted">${esc(d.village || "")}</span></td>
+        <td>${pkr(d.overdue_amount_pkr)}</td><td>${d.oldest_overdue_days}</td>
+        <td><span class="chip ${d.risk}">${d.risk}</span></td>
+        <td><span class="chip ${d.action}">${d.action.replace("_", " ")}</span> <span class="chip ${d.source === "rule" ? "rule" : "draft"}">${d.source === "rule" ? "rule" : "AI"}</span></td>
+        <td>${esc(d.reason)}</td>
+        <td>${d.action === "remind_now" ? `<button class="act" onclick="draft(${d.customer_id},this)">Draft reminder</button>` : ""}</td></tr>`).join("") + `</table>`;
+    const decided = r.escalations.filter((e) => e.status === "decided");
+    if (decided.length) html += `<h3>Your past decisions</h3>` + decided.map((e) => `<p class="muted">${esc(e.name)}: ${esc(e.decision.replace("_", " "))}</p>`).join("");
+    return html;
+  },
+
+  async reminders() {
+    const r = await api("/reminders");
+    if (!r.reminders.length) return `<p class="hint">No reminders yet. Draft one from the Review queue.</p>`;
+    return r.reminders.map((m) => `<div class="item">
+      <div class="row"><b>${esc(m.name)}</b><span class="chip ${m.status}">${m.status}</span><span class="muted">${esc(m.language)} · ${esc(m.tone)} · ${pkr(m.amount_due)}</span>
+        <span class="chip ${m.amount_check_ok ? "ok" : "bad"}">${m.amount_check_ok ? "amount verified" : "amount NOT found in message: check it"}</span></div>
+      <div class="msg" dir="auto" id="msg${m.id}" contenteditable="true">${esc(m.message)}</div>
+      <div class="row">
+        <button class="act alt" onclick="saveEdit(${m.id},this)">Save edit</button>
+        ${m.status === "draft" ? `<button class="act" onclick="approve(${m.id},this)">Approve</button>` : ""}
+        ${m.status !== "draft" ? `<a class="act" style="text-decoration:none" target="_blank" rel="noopener" href="${esc(m.whatsapp_link)}">Open in WhatsApp</a>` : ""}
+        ${m.status === "approved" ? `<button class="act alt" onclick="markSent(${m.id},this)">Mark as sent</button>` : ""}
+      </div></div>`).join("");
+  },
+
+  async promises() {
+    const [p, c] = await Promise.all([api("/promises"), api("/customers")]);
+    customersCache = c.customers;
+    const opts = c.customers.map((x) => `<option value="${x.customer_id}">${esc(x.name)}</option>`).join("");
+    return `<h3>Log a customer reply</h3><p class="hint">Paste what the customer wrote back (Urdu, Roman Urdu or English). The AI extracts the promise; you confirm it.</p>
+      <div class="row"><select id="pcust">${opts}</select></div>
+      <textarea id="ptext" dir="auto" placeholder="e.g. Bhai gandum katne ke baad 20 din mein 30,000 de dunga"></textarea>
+      <p><button class="act" onclick="extract(this)">Extract promise</button></p>
+      <h3>Promises</h3>` +
+      (p.promises.length ? `<table><tr><th>Customer</th><th>Summary</th><th>Date</th><th>Amount</th><th>Confidence</th><th>Status</th><th></th></tr>` +
+        p.promises.map((x) => `<tr><td>${esc(x.name)}</td><td>${esc(x.summary || x.source_text)}</td><td>${esc(x.promised_date || "no date")}</td>
+          <td>${x.amount ? pkr(x.amount) : "-"}</td><td><span class="chip ${x.confidence === "high" ? "low" : x.confidence === "medium" ? "medium" : "high"}">${x.confidence}</span></td>
+          <td><span class="chip ${x.status}">${x.status}</span></td>
+          <td>${x.status === "pending" ? `<button class="act" onclick="pdecide(${x.id},'confirmed',this)">Confirm</button> <button class="act alt" onclick="pdecide(${x.id},'rejected',this)">Reject</button>` : ""}</td></tr>`).join("") + `</table>` : `<p class="muted">None yet.</p>`);
+  },
+
+  async customers() {
+    const c = await api("/customers");
+    customersCache = c.customers;
+    return `<table><tr><th>Customer</th><th>Outstanding</th><th>Overdue</th><th>Days overdue</th><th>Last payment</th><th></th></tr>` +
+      c.customers.map((x) => `<tr><td><b>${esc(x.name)}</b><br><span class="muted">${esc(x.village || "")} · ${esc(x.crop || "")}</span></td>
+        <td>${pkr(x.total_outstanding_pkr)}</td><td>${pkr(x.overdue_amount_pkr)}</td><td>${x.oldest_overdue_days || "-"}</td>
+        <td>${x.last_payment_on ? esc(x.last_payment_on) + " (" + pkr(x.last_payment_amount_pkr) + ")" : "-"}</td>
+        <td><button class="act alt" onclick="addPayment(${x.customer_id},this)">Record payment</button></td></tr>`).join("") + `</table>`;
+  },
+
+  async ailog() {
+    const r = await api("/ai/runs");
+    return `<p class="hint">Every AI call goes to Vultr Serverless Inference (<code>${esc(r.base_url)}</code>), model <code>${esc(r.model)}</code>.</p>` +
+      (r.runs.length ? `<table><tr><th>Time (UTC)</th><th>Task</th><th>Model</th><th>Result</th><th>Latency</th><th>Tokens in/out</th></tr>` +
+        r.runs.map((x) => `<tr><td>${esc(x.created_at)}</td><td>${esc(x.kind)}</td><td>${esc(x.model)}</td>
+          <td><span class="chip ${x.ok ? "ok" : "bad"}">${x.ok ? "ok" : "failed"}</span> ${esc(x.error || "")}</td>
+          <td>${x.latency_ms ?? "-"} ms</td><td>${x.prompt_tokens ?? "-"} / ${x.completion_tokens ?? "-"}</td></tr>`).join("") + `</table>` : `<p class="muted">No AI calls yet.</p>`);
+  },
+};
+
+async function render() {
+  $("#panel").innerHTML = `<p class="muted">Loading…</p>`;
+  try { $("#panel").innerHTML = await views[tab](); await loadSummary(); }
+  catch (e) { $("#panel").innerHTML = `<p class="muted">Could not load: ${esc(e.message)}</p>`; }
+}
+
+async function decide(id, decision, btn) { await busy(btn, "Saving…", async () => { await api("/escalations/" + id + "/decide", { body: { decision } }); toast("Decision saved"); await render(); }); }
+async function draft(cid, btn) { await busy(btn, "Writing…", async () => { const r = await api("/reminders/draft", { body: { customer_id: cid } }); toast(r.amount_check_ok ? "Draft ready in Reminders" : "Draft ready, but check the amount", !r.amount_check_ok); tab = "reminders"; syncTabs(); await render(); }); }
+async function saveEdit(id, btn) { await busy(btn, "Saving…", async () => { const r = await api("/reminders/" + id + "/edit", { body: { message: $("#msg" + id).innerText } }); toast(r.amount_check_ok ? "Saved" : "Saved, but the amount is missing", !r.amount_check_ok); await render(); }); }
+async function approve(id, btn) { await busy(btn, "Approving…", async () => { await api("/reminders/" + id + "/approve", { body: {} }); toast("Approved. You can open it in WhatsApp."); await render(); }); }
+async function markSent(id, btn) { await busy(btn, "Saving…", async () => { await api("/reminders/" + id + "/sent", { body: {} }); toast("Marked as sent"); await render(); }); }
+async function extract(btn) { await busy(btn, "Reading…", async () => { const r = await api("/promises/extract", { body: { customer_id: +$("#pcust").value, text: $("#ptext").value } }); toast(r.has_promise ? "Promise found. Confirm it below." : "No clear promise found"); await render(); }); }
+async function pdecide(id, status, btn) { await busy(btn, "Saving…", async () => { await api("/promises/" + id + "/decide", { body: { status } }); await render(); }); }
+async function addPayment(cid, btn) {
+  const v = prompt("Payment received (PKR):"); if (!v) return;
+  await busy(btn, "Saving…", async () => { await api("/customers/" + cid + "/payments", { body: { amount: Number(v) } }); toast("Payment recorded"); await render(); });
+}
+
+function syncTabs() { document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === tab)); }
+document.querySelectorAll("#tabs button").forEach((b) => (b.onclick = () => { tab = b.dataset.t; syncTabs(); render(); }));
+$("#runReview").onclick = (e) => busy(e.target, "AI is reviewing…", async () => { const r = await api("/review/run", { body: {} }); toast("Reviewed " + r.reviewed + " overdue accounts"); tab = "review"; syncTabs(); await render(); });
+$("#resetDemo").onclick = (e) => busy(e.target, "Resetting…", async () => { if (!confirm("Reset all demo data?")) return; await api("/demo/reset", { body: {} }); toast("Demo data reset"); await render(); });
+render();
+</script>
+</body>
+</html>
