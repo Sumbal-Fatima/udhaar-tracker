@@ -160,6 +160,21 @@ def test_payment_reduces_overdue(client):
     assert r["facts"]["overdue_amount_pkr"] == 0
 
 
+def test_add_customer_credit_and_delete(client):
+    r = client.post("/api/customers", json={"name": "Test Farmer", "phone": "03001234567", "language": "english"})
+    assert r.status_code == 200
+    cid = r.json()["customer_id"]
+    due = (date.today() - timedelta(days=10)).isoformat()
+    assert client.post("/api/ledger", json={"customer_id": cid, "amount": 5000, "due_on": due}).status_code == 200
+    d = client.get(f"/api/customers/{cid}").json()
+    assert d["facts"]["overdue_amount_pkr"] == 5000 and d["ledger"][0]["id"]
+    assert client.delete(f"/api/ledger/{d['ledger'][0]['id']}").status_code == 200
+    assert client.get(f"/api/customers/{cid}").json()["facts"]["overdue_amount_pkr"] == 0
+    assert client.delete(f"/api/customers/{cid}").status_code == 200
+    assert client.get(f"/api/customers/{cid}").status_code == 404
+    assert client.post("/api/customers", json={"name": "X", "phone": "0300000000", "language": "klingon"}).status_code == 400
+
+
 def test_ai_view_never_contains_phone_numbers(client):
     from app import db
     conn = db.connect()
