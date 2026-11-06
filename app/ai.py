@@ -84,7 +84,7 @@ def _parse_json(text: str):
     return json.loads(text[start : end + 1])
 
 
-def chat_json(kind: str, system: str, user_payload: dict, max_tokens: int = 1800) -> dict:
+def chat_json(kind: str, system: str, user_payload: dict, max_tokens: int = 8000) -> dict:
     """Call the model and return a parsed JSON object. One retry if the output is not valid JSON."""
     messages = [
         {"role": "system", "content": system},
