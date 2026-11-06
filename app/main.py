@@ -450,6 +450,66 @@ def decide_promise(pid: int, body: PromiseDecision):
     return {"ok": True}
 
 
+# ---------- manage customers and entries ----------
+
+class CustomerIn(BaseModel):
+    name: str = Field(min_length=1, max_length=80)
+    phone: str = Field(min_length=7, max_length=20)
+    village: str = ""
+    language: str = "roman_urdu"
+    crop: str = ""
+
+
+@app.post("/api/customers")
+def add_customer(body: CustomerIn):
+    if body.language not in ("urdu", "roman_urdu", "english"):
+        raise HTTPException(400, "language must be urdu, roman_urdu or english")
+    conn = db.connect()
+    cur = conn.execute(
+        "INSERT INTO customers(name, phone, village, language, crop) VALUES (?,?,?,?,?)",
+        (body.name.strip(), body.phone.strip(), body.village.strip(), body.language, body.crop.strip()),
+    )
+    conn.commit()
+    cid = cur.lastrowid
+    conn.close()
+    return {"ok": True, "customer_id": cid}
+
+
+@app.delete("/api/customers/{cid}")
+def delete_customer(cid: int):
+    conn = db.connect()
+    if not conn.execute("SELECT 1 FROM customers WHERE id=?", (cid,)).fetchone():
+        raise HTTPException(404, "Customer not found")
+    for table in ("triage", "reminders", "promises", "escalations", "payments", "ledger"):
+        conn.execute(f"DELETE FROM {table} WHERE customer_id=?", (cid,))
+    conn.execute("DELETE FROM customers WHERE id=?", (cid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/ledger/{lid}")
+def delete_ledger(lid: int):
+    conn = db.connect()
+    if not conn.execute("SELECT 1 FROM ledger WHERE id=?", (lid,)).fetchone():
+        raise HTTPException(404, "Entry not found")
+    conn.execute("DELETE FROM ledger WHERE id=?", (lid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/payments/{pid}")
+def delete_payment(pid: int):
+    conn = db.connect()
+    if not conn.execute("SELECT 1 FROM payments WHERE id=?", (pid,)).fetchone():
+        raise HTTPException(404, "Payment not found")
+    conn.execute("DELETE FROM payments WHERE id=?", (pid,))
+    conn.commit()
+    conn.close()
+    return {"ok": True}
+
+
 # ---------- demo ----------
 
 @app.post("/api/demo/reset")
