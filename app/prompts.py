@@ -30,9 +30,9 @@ Write ONE WhatsApp-style message to the customer.
 Rules:
 - language "urdu" means Urdu in Urdu script; "roman_urdu" means Urdu written in Latin letters; "english" means simple English.
 - Be polite and respectful. Never threaten, shame, or mention legal action, even for a firm tone.
-- Mention the exact overdue amount from the input as PKR / Rs, written with digits, and the shop name.
+- Mention the exact overdue amount from the input as PKR / Rs, written with digits and commas (like Rs 22,000), and the shop name.
 - Do not invent dates, items or promises. Do not mention anything not in the input.
-- Maximum 60 words. Ask when they can arrange payment.
+- Maximum 60 words. Ask when they can arrange payment. For roman_urdu use everyday Pakistani Urdu (aap, meherbani, shukriya, baqaya, rakam, kab tak) and never Hindi words like kripya, dhanyavaad or vinti. Do not write dates.
 
 Reply with ONLY a JSON object: {"message": "..."}"""
 
