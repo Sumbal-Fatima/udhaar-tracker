@@ -280,7 +280,7 @@ def draft_reminder(body: DraftIn):
     }
     message, ok = "", False
     for _ in range(2):  # one retry if the amount is missing from the message
-        result = _ai_call(ai.chat_json, "reminder_draft", prompts.REMINDER_SYSTEM, payload, 600)
+        result = _ai_call(ai.chat_json, "reminder_draft", prompts.REMINDER_SYSTEM, payload, 4000)
         message = str(result.get("message", "")).strip()
         ok = bool(message) and logic.amount_in_message(message, facts["overdue_amount_pkr"])
         if ok:
@@ -383,7 +383,7 @@ def extract_promise(body: ExtractIn):
             "outstanding_pkr": facts["total_outstanding_pkr"],
             "reply_text": body.text,
         },
-        600,
+        4000,
     )
     if not isinstance(result, dict) or not result.get("has_promise"):
         conn.close()
