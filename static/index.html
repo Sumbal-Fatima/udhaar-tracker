@@ -177,11 +177,16 @@ const views = {
   async customers() {
     const c = await api("/customers");
     customersCache = c.customers;
-    return `<table><tr><th>Customer</th><th>Outstanding</th><th>Overdue</th><th>Days overdue</th><th>Last payment</th><th></th></tr>` +
+    return `<details class="item"><summary><b>+ Add customer</b></summary>
+      <div class="row" style="margin-top:8px"><input id="nc_name" placeholder="Name" /><input id="nc_phone" placeholder="Phone e.g. 0300 1234567" />
+        <input id="nc_village" placeholder="Village" /><input id="nc_crop" placeholder="Crop" />
+        <select id="nc_lang"><option value="roman_urdu">Roman Urdu</option><option value="urdu">Urdu</option><option value="english">English</option></select>
+        <button class="act" onclick="addCustomer(this)">Save customer</button></div></details>
+      <table><tr><th>Customer</th><th>Outstanding</th><th>Overdue</th><th>Days overdue</th><th>Last payment</th><th></th></tr>` +
       c.customers.map((x) => `<tr><td><b>${esc(x.name)}</b><br><span class="muted">${esc(x.village || "")} · ${esc(x.crop || "")}</span></td>
         <td>${pkr(x.total_outstanding_pkr)}</td><td>${pkr(x.overdue_amount_pkr)}</td><td>${x.oldest_overdue_days || "-"}</td>
         <td>${x.last_payment_on ? esc(x.last_payment_on) + " (" + pkr(x.last_payment_amount_pkr) + ")" : "-"}</td>
-        <td><button class="act alt" onclick="addPayment(${x.customer_id},this)">Record payment</button></td></tr>`).join("") + `</table>`;
+        <td><button class="act alt" onclick="showDetail(${x.customer_id})">Entries</button> <button class="act alt" onclick="addPayment(${x.customer_id},this)">Record payment</button> <button class="act alt" onclick="delCustomer(${x.customer_id},this)">Delete</button></td></tr>`).join("") + `</table><div id="detail"></div>`;
   },
 
   async ailog() {
@@ -210,6 +215,42 @@ async function pdecide(id, status, btn) { await busy(btn, "Saving…", async () 
 async function addPayment(cid, btn) {
   const v = prompt("Payment received (PKR):"); if (!v) return;
   await busy(btn, "Saving…", async () => { await api("/customers/" + cid + "/payments", { body: { amount: Number(v) } }); toast("Payment recorded"); await render(); });
+}
+
+async function addCustomer(btn) {
+  await busy(btn, "Saving…", async () => {
+    await api("/customers", { body: { name: $("#nc_name").value.trim(), phone: $("#nc_phone").value.trim(), village: $("#nc_village").value.trim(), crop: $("#nc_crop").value.trim(), language: $("#nc_lang").value } });
+    toast("Customer added. Click Entries to add credit."); await render();
+  });
+}
+async function delCustomer(cid, btn) {
+  const c = customersCache.find((x) => x.customer_id === cid);
+  if (!confirm("Delete " + (c ? c.name : "this customer") + " and all their entries?")) return;
+  await busy(btn, "Deleting…", async () => { await api("/customers/" + cid, { method: "DELETE" }); toast("Customer deleted"); await render(); });
+}
+async function showDetail(cid) {
+  const d = await api("/customers/" + cid);
+  const due = new Date(Date.now() + 30 * 864e5).toISOString().slice(0, 10);
+  $("#detail").innerHTML = `<h3>${esc(d.facts.name)}: credit given and payments</h3>
+    <div class="row"><input id="lg_amt" type="number" min="1" placeholder="Credit amount (PKR)" /><input id="lg_due" type="date" value="${due}" /><input id="lg_note" placeholder="Note e.g. urea 10 bags" />
+      <button class="act" onclick="addCredit(${cid},this)">Add credit entry</button></div>
+    <table><tr><th>Given on</th><th>Due</th><th>Amount</th><th>Note</th><th></th></tr>` +
+    d.ledger.map((l) => `<tr><td>${esc(l.issued_on)}</td><td>${esc(l.due_on)}</td><td>${pkr(l.amount)}</td><td>${esc(l.note || "")}</td>
+      <td><button class="act alt" onclick="delEntry('ledger',${l.id},${cid},this)">Delete</button></td></tr>`).join("") + `</table>
+    <h3>Payments received</h3>` + (d.payments.length ? `<table><tr><th>Paid on</th><th>Amount</th><th></th></tr>` +
+    d.payments.map((p) => `<tr><td>${esc(p.paid_on)}</td><td>${pkr(p.amount)}</td>
+      <td><button class="act alt" onclick="delEntry('payments',${p.id},${cid},this)">Delete</button></td></tr>`).join("") + `</table>` : `<p class="muted">None.</p>`);
+  $("#detail").scrollIntoView({ behavior: "smooth" });
+}
+async function addCredit(cid, btn) {
+  await busy(btn, "Saving…", async () => {
+    await api("/ledger", { body: { customer_id: cid, amount: Number($("#lg_amt").value), due_on: $("#lg_due").value, note: $("#lg_note").value } });
+    toast("Credit entry added"); await render(); await showDetail(cid);
+  });
+}
+async function delEntry(kind, id, cid, btn) {
+  if (!confirm("Delete this entry?")) return;
+  await busy(btn, "Deleting…", async () => { await api("/" + kind + "/" + id, { method: "DELETE" }); toast("Deleted"); await render(); await showDetail(cid); });
 }
 
 function syncTabs() { document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.t === tab)); }
